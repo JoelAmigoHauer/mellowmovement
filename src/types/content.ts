@@ -52,8 +52,70 @@ export interface HomePage {
   story: StoryCta;
 }
 
+export interface ContactInfo {
+  email: string;
+  phone: string;
+  availability: string;
+  area: string;
+}
+
+export interface AboutPage {
+  introHeadline: string;
+  tagline: string;
+  attribution: string;
+  bioHeadline: string;
+  bio: string[];
+  qualifications: string[];
+  portrait: ImageRef;
+  hero: ImageRef;
+  ctaHeadline: string;
+}
+
+export interface ServiceItem {
+  title: string;
+  prices: string[];
+  description: string;
+  healthFund?: boolean;
+  image?: ImageRef;
+}
+
+export interface ServicesPage {
+  headline: string;
+  specialDeal: string;
+  hero: ImageRef;
+  massage: ServiceItem[];
+  yoga: ServiceItem[];
+  note: string;
+  ctaHeadline: string;
+}
+
+export interface SimplePage {
+  headline: string;
+  intro: string[];
+  hero: ImageRef;
+}
+
+export interface BlogPostBlock {
+  type: "h2" | "p";
+  text: string;
+}
+
+export interface BlogPost {
+  slug: string;
+  title: string;
+  excerpt: string;
+  image: ImageRef;
+  body: BlogPostBlock[];
+}
+
 export interface SiteContent {
   settings: SiteSettings;
   home: HomePage;
   footer: FooterContent;
+  contact: ContactInfo;
+  about: AboutPage;
+  services: ServicesPage;
+  book: SimplePage;
+  newsletter: SimplePage;
+  posts: BlogPost[];
 }
