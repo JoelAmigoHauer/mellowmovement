@@ -1,18 +1,56 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@sanity/client";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createClient, type SanityClient } from "@sanity/client";
 import { fallbackContent } from "@/lib/content";
 import { projectId, dataset, apiVersion } from "@/sanity/env";
 
 // One-time content seeder. Runs server-side on Vercel using the Sanity write
 // token from the environment, so no secret needs to be shared. Seeds text
-// content for every page + the blog posts; images fall back to the bundled
-// local assets and can be uploaded later in /studio.
+// content AND uploads the extracted images for every page + the blog posts, so
+// Studio comes up fully populated and every image is editable in place.
 //
 // Trigger once:  /api/seed?secret=<SEED_SECRET>
 // Guard: requires ?secret to match env SEED_SECRET (default "mellow-seed").
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 40) || "k";
+
+type ImageRefValue = { _type: "image"; asset: { _type: "reference"; _ref: string } };
+
+// Upload a bundled public/ image to Sanity once (cached by path) and return an
+// image reference. Tolerant: returns undefined if a file is missing so seeding
+// still succeeds and that field simply falls back to the local asset.
+function makeImageUploader(client: SanityClient) {
+  const cache = new Map<string, ImageRefValue | undefined>();
+  return async function image(publicSrc: string | undefined): Promise<ImageRefValue | undefined> {
+    if (!publicSrc) return undefined;
+    const rel = publicSrc.replace(/^\//, "");
+    if (cache.has(rel)) return cache.get(rel);
+    try {
+      const buf = await readFile(join(process.cwd(), "public", rel));
+      const asset = await client.assets.upload("image", buf, { filename: rel.split("/").pop() });
+      const ref: ImageRefValue = { _type: "image", asset: { _type: "reference", _ref: asset._id } };
+      cache.set(rel, ref);
+      return ref;
+    } catch {
+      cache.set(rel, undefined);
+      return undefined;
+    }
+  };
+}
+
+// Photos for each service, mapped by title (service items carry no image in the
+// bundled content — the page maps them by title, so the seeder mirrors that).
+const SERVICE_IMAGE: Record<string, string> = {
+  "Remedial Massage": "/images/pages/svc-remedial.webp",
+  "Pre & Post Pregnancy Massage": "/images/pages/svc-pregnancy.webp",
+  "Swedish Massage": "/images/pages/svc-swedish.webp",
+  "Private Yoga": "/images/pages/svc-private-yoga.webp",
+  "Group / Family Yoga": "/images/pages/svc-group-yoga.webp",
+  "Corporate Yoga": "/images/pages/svc-corporate.webp",
+};
 
 export async function GET(request: Request) {
   const secret = new URL(request.url).searchParams.get("secret");
@@ -30,11 +68,57 @@ export async function GET(request: Request) {
   }
 
   const client = createClient({ projectId, dataset, apiVersion, token, useCdn: false });
+  const image = makeImageUploader(client);
   const c = fallbackContent;
 
   type SeedDoc = { _id: string; _type: string; [key: string]: unknown };
 
   try {
+    // Upload images first so each can be referenced from the documents below.
+    const homeServices = await Promise.all(
+      c.home.services.map(async (s) => ({
+        _type: "serviceCard",
+        _key: key(s.title),
+        title: s.title,
+        href: s.href,
+        alt: s.image.alt,
+        image: await image(s.image.src),
+      })),
+    );
+    const storyImage = await image(c.home.story.image.src);
+    const aboutPortrait = await image(c.about.portrait.src);
+    const aboutHero = await image(c.about.hero.src);
+    const bookHero = await image(c.book.hero.src);
+    const newsletterHero = await image(c.newsletter.hero.src);
+
+    const mapServices = (items: typeof c.services.massage) =>
+      Promise.all(
+        items.map(async (s) => ({
+          _type: "serviceItem",
+          _key: key(s.title),
+          title: s.title,
+          prices: s.prices,
+          description: s.description,
+          healthFund: !!s.healthFund,
+          image: await image(s.image?.src ?? SERVICE_IMAGE[s.title]),
+        })),
+      );
+    const massage = await mapServices(c.services.massage);
+    const yoga = await mapServices(c.services.yoga);
+
+    const posts = await Promise.all(
+      c.posts.map(async (p) => ({
+        _id: `post-${p.slug}`,
+        _type: "post",
+        title: p.title,
+        slug: { _type: "slug", current: p.slug },
+        excerpt: p.excerpt,
+        image: await image(p.image.src),
+        body: p.body.map((b) => ({ _type: "postBlock", _key: key(b.text), style: b.type, text: b.text })),
+        publishedAt: new Date("2023-01-01").toISOString(),
+      })),
+    );
+
     const docs: SeedDoc[] = [
       {
         _id: "siteSettings",
@@ -52,10 +136,11 @@ export async function GET(request: Request) {
         _id: "homePage",
         _type: "homePage",
         heroHeadline: c.home.hero.headline,
-        services: c.home.services.map((s) => ({ _type: "serviceCard", _key: key(s.title), title: s.title, href: s.href, alt: s.image.alt })),
+        services: homeServices,
         storyHeadline: c.home.story.headline,
         storyButtonLabel: c.home.story.buttonLabel,
         storyButtonHref: c.home.story.buttonHref,
+        storyImage,
         storyImageAlt: c.home.story.image.alt,
       },
       {
@@ -67,6 +152,8 @@ export async function GET(request: Request) {
         bioHeadline: c.about.bioHeadline,
         bio: c.about.bio,
         qualifications: c.about.qualifications,
+        portrait: aboutPortrait,
+        hero: aboutHero,
         ctaHeadline: c.about.ctaHeadline,
       },
       {
@@ -74,13 +161,13 @@ export async function GET(request: Request) {
         _type: "servicesPage",
         headline: c.services.headline,
         specialDeal: c.services.specialDeal,
-        massage: c.services.massage.map((s) => ({ _type: "serviceItem", _key: key(s.title), title: s.title, prices: s.prices, description: s.description, healthFund: !!s.healthFund })),
-        yoga: c.services.yoga.map((s) => ({ _type: "serviceItem", _key: key(s.title), title: s.title, prices: s.prices, description: s.description, healthFund: !!s.healthFund })),
+        massage,
+        yoga,
         note: c.services.note,
         ctaHeadline: c.services.ctaHeadline,
       },
-      { _id: "bookPage", _type: "bookPage", headline: c.book.headline, intro: c.book.intro },
-      { _id: "newsletterPage", _type: "newsletterPage", headline: c.newsletter.headline, intro: c.newsletter.intro },
+      { _id: "bookPage", _type: "bookPage", headline: c.book.headline, intro: c.book.intro, hero: bookHero },
+      { _id: "newsletterPage", _type: "newsletterPage", headline: c.newsletter.headline, intro: c.newsletter.intro, hero: newsletterHero },
       {
         _id: "footer",
         _type: "footer",
@@ -92,15 +179,7 @@ export async function GET(request: Request) {
         newsletterHref: c.footer.newsletterHref,
         instagramUrl: c.footer.instagramUrl,
       },
-      ...c.posts.map((p) => ({
-        _id: `post-${p.slug}`,
-        _type: "post",
-        title: p.title,
-        slug: { _type: "slug", current: p.slug },
-        excerpt: p.excerpt,
-        body: p.body.map((b) => ({ _type: "postBlock", _key: key(b.text), style: b.type, text: b.text })),
-        publishedAt: new Date("2023-01-01").toISOString(),
-      })),
+      ...posts,
     ];
 
     let tx = client.transaction();
