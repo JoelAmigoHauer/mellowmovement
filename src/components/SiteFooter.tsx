@@ -45,7 +45,23 @@ export function SiteFooter({ footer }: SiteFooterProps) {
       </div>
 
       <div className="page-inset mt-14 border-t border-border/60 pt-6 text-sm text-ink/50">
-        © {new Date().getFullYear()} {footer.brand}. Mobile massage & yoga · Bondi, NSW.
+        <p>© {new Date().getFullYear()} {footer.brand}. Mobile massage &amp; yoga · Bondi, NSW.</p>
+        <p className="mt-2 text-xs text-ink/45">
+          “Ask ChatGPT” button concept by{" "}
+          <a
+            href={"https://methodworks.com.au/?utm_source=ask-chatgpt-button&utm_medium=referral&utm_campaign=ask-chatgpt-about-us&utm_content=concept-credit"}
+            className="underline underline-offset-2 transition-colors hover:text-coral"
+          >
+            MethodWorks
+          </a>{" "}
+          ·{" "}
+          <a
+            href={"https://methodworks.com.au/?utm_source=ask-chatgpt-button&utm_medium=referral&utm_campaign=ask-chatgpt-about-us&utm_content=footer-link"}
+            className="underline underline-offset-2 transition-colors hover:text-coral"
+          >
+            methodworks.com.au
+          </a>
+        </p>
       </div>
     </footer>
   );
